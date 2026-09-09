@@ -28,8 +28,9 @@ float tnie_reluf(float x);
  * @param type  Activation type (NONE, SIGMOID, RELU).
  * @param data  Pointer to the vector to transform.
  * @param size  Number of elements in the vector.
+ * @return TNIE_OK on success, otherwise a TNIE_Status error code.
  */
-void tnie_apply_activation(TNIE_ActivationType type, float *data, int size);
+int tnie_apply_activation(TNIE_ActivationType type, float *data, int size);
 
 #ifdef __cplusplus
 }

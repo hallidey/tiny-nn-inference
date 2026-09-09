@@ -11,13 +11,17 @@ float tnie_reluf(float x) {
     return (x > 0.0f) ? x : 0.0f;
 }
 
-void tnie_apply_activation(TNIE_ActivationType type, float *data, int size) {
+int tnie_apply_activation(TNIE_ActivationType type, float *data, int size) {
     if (!data || size <= 0) {
-        return;
+        return TNIE_ERROR_INVALID_ARGUMENT;
     }
 
     if (type == TNIE_ACT_NONE) {
-        return; // no-op
+        return TNIE_OK; // no-op
+    }
+
+    if (type != TNIE_ACT_SIGMOID && type != TNIE_ACT_RELU) {
+        return TNIE_ERROR_INVALID_ACTIVATION;
     }
 
     for (int i = 0; i < size; ++i) {
@@ -30,8 +34,9 @@ void tnie_apply_activation(TNIE_ActivationType type, float *data, int size) {
                 break;
             case TNIE_ACT_NONE:
             default:
-                // Should never hit this branch if handled correctly.
                 break;
         }
     }
+
+    return TNIE_OK;
 }

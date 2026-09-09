@@ -1,103 +1,119 @@
-# TNIE - Tiny Neural Inference Engine
+# TNIE — Tiny Neural Inference Engine
 
-## A minimal neural inference engine, written in pure C, designed for IoT devices and low-power systems.
+> Train anywhere. Infer on tiny devices.
 
-### 📌 Why did I develop this demo?
+TNIE is a small, auditable neural-network inference runtime written in portable
+C11. It is designed for learning, prototyping, and eventually deploying small
+feed-forward models in sensor and microcontroller applications.
 
-In the AI ​​world, most applications rely on heavyweight frameworks like TensorFlow, PyTorch, or ONNX Runtime. However, these tools are too complex and often unusable in IoT contexts, embedded systems, low-power devices, or hardware with very little memory (microcontrollers, wearables, industrial sensors).  
-So my question was: is it possible to run a neural network without external libraries, using only pure C, with lightweight code that is easily portable to any device?  
-This project was born to answer this need: to create a mini neural inference engine written from scratch in C, modular, lightweight and understandable, useful as a basis for real-world applications.
+TNIE is intentionally focused: it is not a replacement for a general-purpose
+machine-learning framework. Models are trained elsewhere; TNIE runs their
+forward pass with no third-party runtime dependencies.
 
-### 🎯 Objective of the project?
+## Current capabilities
 
-Build a Neural Network Inference Engine in pure C that is:
+- Dense (fully connected) layers
+- Linear, ReLU, and sigmoid activations
+- Multi-layer feed-forward inference using `float`
+- Network and dimension validation
+- Checked input and output buffer sizes
+- Human-readable status codes
+- CMake and Make builds
+- Automated tests on Linux, macOS, and Windows
+- A reproducible XOR example
 
-- modular and lightweight;
-- able to run inference on real-world inputs (e.g., sensor data);
-- designed to load model weights from external files (planned for next iteration);
-- supports Dense, ReLU, Sigmoid, Softmax layers;
-- requires no external libraries or dependencies;
-- portable, optimizable, easy to understand and deploy on embedded systems
+Softmax, external model loading, quantization, and allocation-free inference
+are not implemented yet.
 
-### 🧩 What does this engine do?
+## Quick start
 
-Using just a few kilobytes of memory:
+### CMake
 
-1. Receives numerical input (e.g., values ​​from sensors, accelerometers, audio, temperature, etc.);
-2. Processes it using a feed-forward neural network;
-3. Returns a prediction or classification;
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release
+ctest --test-dir build --build-config Release --output-on-failure
+```
 
-### 🚀 Areas of use
+Run the example from the build directory. With a single-configuration
+generator:
 
-- IoT: gesture, motion, and presence recognition, ecc.;
-- Wearable: fall detection, fitness tracking, posture, ecc.;
-- Medical: vital signs analysis, patient monitoring, ecc.;
-- Industrial: predictive sensors, preventive maintenance, ecc.;
-- Robotics: obstacle detection, motor control, ecc.;
-- Home automation;
+```sh
+./build/tnie_xor_demo
+```
 
-### 🛠️ How can it be implemented?
+Visual Studio and other multi-configuration generators place the executable in
+`build/Release/`.
 
-- on ARM / RISC-V microcontrollers;
-- on STM32, ESP32, Arduino boards;
-- integrated with Python for training predictive models;
+### Make
 
-### 🔄 Current Status:
-
-- Neural inference engine fully working;
-- XOR model implemented via hardcoded weights;
-- Modular architecture ready for expansion;
-
-### 🔭 Next Steps (Roadmap):
-
-- Load model weights from JSON / binary file;
-- Python utility script to export trained models;
-- Quantization (float32 → int8) for low-power devices;
-- Benchmark and profiling tools;
-- Deployment on STM32 / ESP32 boards;
-
-### 🧪 XOR Demo (current status):
-
-The current version of TNIE includes a minimal demo model that approximates the XOR function using a tiny feed–forward neural network with hardcoded weights.  
-This model is only used to **validate the inference engine** and to provide a **simple, reproducible example**.
-
-> ⚠️ **Note**  
-> The XOR model is _not_ the real purpose of this project —  
-> it is simply a minimal test used to validate the correctness of the inference engine.  
-> The engine itself is designed to work with **any feed-forward model**, as long as weights and biases are provided.  
-> Future iterations will load models from external files (`JSON` / `binary`) and will target **real sensor data** for IoT and embedded applications.
-
-### 🔧 Build & Run:
-
-From the project root:
-
-```bash
+```sh
 make
-```
-
-This will build the demo executable:
-
-```
 ./tnie_xor_demo
+make test
 ```
 
-To Run, from the project root:
+## Minimal usage
 
-```bash
-./tnie_xor_demo
+```c
+#include "tnie_nn.h"
+
+float input[2] = {0.0f, 1.0f};
+float output[1];
+
+int status = tnie_nn_forward_checked(network, input, 2, output, 1);
+if (status != TNIE_OK) {
+    /* tnie_status_string(status) describes the failure. */
+}
 ```
 
-Example output:
+Weights use row-major order. For a layer with `input_size` inputs and
+`output_size` outputs, the weight from input `i` to output `o` is stored at:
 
-```
-TNIE - Tiny Neural Inference Engine
-XOR demo with a hardcoded neural network model
-Input: (0.0, 0.0) -> raw = 0.0000, predicted = 0, expected = 0
-Input: (0.0, 1.0) -> raw = 1.0000, predicted = 1, expected = 1
-Input: (1.0, 0.0) -> raw = 1.0000, predicted = 1, expected = 1
-Input: (1.0, 1.0) -> raw = 0.0000, predicted = 0, expected = 0
+```c
+weights[o * input_size + i]
 ```
 
-- raw → raw output value from the final neuron (after activation)
-- predicted → thresholded output (raw > 0.5)
-- expected → XOR ground-truth
+The legacy convenience function `tnie_nn_forward()` remains available, but
+cannot verify the size of caller-owned buffers. New code should use
+`tnie_nn_forward_checked()`.
+
+## Project structure
+
+```text
+include/        Public TNIE headers
+src/            Inference runtime implementation
+examples/xor/   Minimal example model and CLI
+tests/          Runtime and regression tests
+.github/        Continuous integration
+```
+
+## Intended use cases
+
+- Classification from precomputed sensor features
+- Vibration and anomaly detection
+- Gesture and motion recognition
+- Small control and automation models
+- Educational embedded-ML projects
+
+The current runtime allocates temporary buffers during each forward pass. That
+makes this release suitable for desktop validation and embedded prototyping,
+but not yet for memory-constrained production firmware.
+
+## Roadmap
+
+- **0.2 — Reliable Core:** validation, safer buffers, tests, CMake, CI
+- **0.3 — Embedded First:** caller-owned workspace, zero heap during inference,
+  immutable models in flash, benchmarks
+- **0.4 — Model Format:** versioned `.tnie` format and Python exporter
+- **0.5 — Real Sensor Demo:** reproducible vibration-classification pipeline
+- **0.6 — TNIE Studio:** browser visualization powered by the C runtime through
+  WebAssembly
+- **1.0:** stable model format and documented ESP32/STM32 integration
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development instructions and
+[CHANGELOG.md](CHANGELOG.md) for release notes.
+
+## License
+
+TNIE is available under the [MIT License](LICENSE).

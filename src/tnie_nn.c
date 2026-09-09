@@ -1,13 +1,18 @@
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include "tnie_nn.h"
 #include "tnie_activations.h"
 
-void tnie_dense_forward(const TNIE_DenseLayer *layer,
-                        const float *input,
-                        float *output) {
-    if (!layer || !input || !output) {
-        return;
+int tnie_dense_forward(const TNIE_DenseLayer *layer,
+                       const float *input,
+                       float *output) {
+    if (!layer || !input || !output || !layer->weights || !layer->biases) {
+        return TNIE_ERROR_INVALID_ARGUMENT;
+    }
+
+    if (layer->input_size <= 0 || layer->output_size <= 0) {
+        return TNIE_ERROR_INVALID_DIMENSION;
     }
 
     int in_size  = layer->input_size;
@@ -27,29 +32,61 @@ void tnie_dense_forward(const TNIE_DenseLayer *layer,
 
         output[o] = sum;
     }
+
+    return TNIE_OK;
 }
 
-int tnie_nn_forward(const TNIE_NeuralNetwork *nn,
-                    const float *input,
-                    float *output) {
+int tnie_nn_validate(const TNIE_NeuralNetwork *nn) {
     if (!nn || nn->num_layers <= 0 || !nn->layers || !nn->activations) {
-        return -1; // invalid network
+        return TNIE_ERROR_INVALID_NETWORK;
+    }
+
+    for (int l = 0; l < nn->num_layers; ++l) {
+        const TNIE_DenseLayer *layer = &nn->layers[l];
+
+        if (layer->input_size <= 0 || layer->output_size <= 0) {
+            return TNIE_ERROR_INVALID_DIMENSION;
+        }
+
+        if (!layer->weights || !layer->biases) {
+            return TNIE_ERROR_INVALID_NETWORK;
+        }
+
+        if (nn->activations[l] < TNIE_ACT_NONE ||
+            nn->activations[l] > TNIE_ACT_RELU) {
+            return TNIE_ERROR_INVALID_ACTIVATION;
+        }
+
+        if (l > 0 && nn->layers[l - 1].output_size != layer->input_size) {
+            return TNIE_ERROR_INVALID_DIMENSION;
+        }
+    }
+
+    return TNIE_OK;
+}
+
+static int tnie_nn_forward_impl(const TNIE_NeuralNetwork *nn,
+                                const float *input,
+                                float *output) {
+    int status = tnie_nn_validate(nn);
+    if (status != TNIE_OK) {
+        return status;
     }
 
     if (!input || !output) {
-        return -2; // invalid buffers
+        return TNIE_ERROR_INVALID_ARGUMENT;
     }
 
-    // Determine the maximum layer size to allocate working buffers.
-    int max_size = 0;
+    // Both alternating buffers must also be able to hold the original input.
+    int max_size = nn->layers[0].input_size;
     for (int l = 0; l < nn->num_layers; ++l) {
         if (nn->layers[l].output_size > max_size) {
             max_size = nn->layers[l].output_size;
         }
     }
 
-    if (max_size <= 0) {
-        return -3; // corrupted network configuration
+    if ((size_t)max_size > SIZE_MAX / sizeof(float)) {
+        return TNIE_ERROR_INVALID_DIMENSION;
     }
 
     // Allocate two working buffers to alternate between layers.
@@ -58,18 +95,11 @@ int tnie_nn_forward(const TNIE_NeuralNetwork *nn,
     if (!buf_a || !buf_b) {
         free(buf_a);
         free(buf_b);
-        return -4; // memory allocation failure
+        return TNIE_ERROR_ALLOCATION_FAILED;
     }
 
     // Copy the input into the first buffer.
     const TNIE_DenseLayer *first_layer = &nn->layers[0];
-    if (first_layer->input_size <= 0) {
-        free(buf_a);
-        free(buf_b);
-        return -5;
-    }
-
-    // We only copy exactly input_size elements from the input.
     memcpy(buf_a, input, sizeof(float) * first_layer->input_size);
 
     float *current_in  = buf_a;
@@ -80,12 +110,22 @@ int tnie_nn_forward(const TNIE_NeuralNetwork *nn,
         const TNIE_DenseLayer *layer = &nn->layers[l];
 
         // Compute linear transformation: y = W * x + b
-        tnie_dense_forward(layer, current_in, current_out);
+        status = tnie_dense_forward(layer, current_in, current_out);
+        if (status != TNIE_OK) {
+            free(buf_a);
+            free(buf_b);
+            return status;
+        }
 
         // Apply activation in-place on the output buffer.
-        tnie_apply_activation(nn->activations[l],
-                              current_out,
-                              layer->output_size);
+        status = tnie_apply_activation(nn->activations[l],
+                                       current_out,
+                                       layer->output_size);
+        if (status != TNIE_OK) {
+            free(buf_a);
+            free(buf_b);
+            return status;
+        }
 
         // If this is not the last layer, swap input/output buffers.
         // Otherwise, copy final result into the user-provided output.
@@ -101,7 +141,56 @@ int tnie_nn_forward(const TNIE_NeuralNetwork *nn,
 
     free(buf_a);
     free(buf_b);
-    return 0;
+    return TNIE_OK;
+}
+
+int tnie_nn_forward(const TNIE_NeuralNetwork *nn,
+                    const float *input,
+                    float *output) {
+    return tnie_nn_forward_impl(nn, input, output);
+}
+
+int tnie_nn_forward_checked(const TNIE_NeuralNetwork *nn,
+                            const float *input,
+                            size_t input_size,
+                            float *output,
+                            size_t output_size) {
+    int status = tnie_nn_validate(nn);
+    if (status != TNIE_OK) {
+        return status;
+    }
+
+    if (!input || !output) {
+        return TNIE_ERROR_INVALID_ARGUMENT;
+    }
+
+    if (input_size < (size_t)nn->layers[0].input_size ||
+        output_size < (size_t)nn->layers[nn->num_layers - 1].output_size) {
+        return TNIE_ERROR_BUFFER_TOO_SMALL;
+    }
+
+    return tnie_nn_forward_impl(nn, input, output);
+}
+
+const char *tnie_status_string(int status) {
+    switch (status) {
+        case TNIE_OK:
+            return "success";
+        case TNIE_ERROR_INVALID_ARGUMENT:
+            return "invalid argument";
+        case TNIE_ERROR_INVALID_NETWORK:
+            return "invalid network";
+        case TNIE_ERROR_INVALID_DIMENSION:
+            return "invalid dimension";
+        case TNIE_ERROR_INVALID_ACTIVATION:
+            return "invalid activation";
+        case TNIE_ERROR_BUFFER_TOO_SMALL:
+            return "buffer too small";
+        case TNIE_ERROR_ALLOCATION_FAILED:
+            return "allocation failed";
+        default:
+            return "unknown error";
+    }
 }
 
 void tnie_nn_free(TNIE_NeuralNetwork *nn) {
